@@ -1,14 +1,3 @@
-"""
-MS6 - Statistics Microservice
-==============================
-A generic, reusable statistics aggregation service.
-Logs any numeric entries for any user and computes daily/historical totals.
-
-Completely decoupled — does NOT call any other microservice directly.
-If you want to notify another service (e.g. a badge service), subscribe
-to the /events/daily endpoint or poll it from your orchestration layer.
-"""
-
 import os
 import sqlite3
 import json
@@ -19,9 +8,7 @@ app = Flask(__name__)
 DB_PATH = os.environ.get("DB_PATH", "data.db")
 
 
-# ---------------------------------------------------------------------------
 # Database helpers
-# ---------------------------------------------------------------------------
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -45,25 +32,21 @@ def init_db():
         db.commit()
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
+#Sum all numbers across a list of entries
 def aggregate_entries(entries):
-    """Sum all numeric fields across a list of entry rows."""
     totals = {}
     for entry in entries:
         fields = json.loads(entry["fields"])
         for key, val in fields.items():
             if isinstance(val, (int, float)):
                 totals[key] = round(totals.get(key, 0) + val, 4)
-    # Final round to 1 decimal
+    #round to 1 decimal
     return {k: round(v, 1) for k, v in totals.items()}
 
 
-# ---------------------------------------------------------------------------
 # Routes
-# ---------------------------------------------------------------------------
 
 @app.route("/health")
 def health():
@@ -71,11 +54,6 @@ def health():
 
 
 def fire_webhook(user_id, day):
-    """
-    Optionally notify another service after a log entry.
-    Set WEBHOOK_URL env var to enable (e.g. http://ms9-badges:5009/milestones/check).
-    This keeps MS6 decoupled — it just fires and forgets; failures are silent.
-    """
     webhook_url = os.environ.get("WEBHOOK_URL")
     if not webhook_url:
         return
@@ -85,7 +63,6 @@ def fire_webhook(user_id, day):
 
         with get_db() as db:
             entries = db.execute(
-                "SELECT * FROM log_entries WHERE user_id=? AND logged_at=?",
                 (user_id, day)
             ).fetchall()
         totals = aggregate_entries(entries)
@@ -99,7 +76,7 @@ def fire_webhook(user_id, day):
                 )
                 urllib.request.urlopen(req, timeout=2)
             except Exception:
-                pass  # silent — never block the main response
+                pass 
 
         threading.Thread(target=_post, daemon=True).start()
     except Exception:
@@ -108,16 +85,6 @@ def fire_webhook(user_id, day):
 
 @app.route("/log", methods=["POST"])
 def log_entry():
-    """
-    POST /log — record a new entry for a user.
-    Body (JSON):
-      user_id    – required, string
-      item_id    – optional, reference to an item in another service
-      item_name  – optional, human label
-      logged_at  – optional, YYYY-MM-DD (defaults to today)
-      fields     – required, object of numeric values
-                   e.g. {"calories": 200, "protein_g": 30, "carbs_g": 40}
-    """
     body = request.get_json(force=True)
 
     if not body.get("user_id"):
@@ -145,12 +112,9 @@ def log_entry():
     return jsonify({"id": cur.lastrowid, "status": "logged"}), 201
 
 
+#Returns totals for loggen entries on a date
 @app.route("/stats/daily")
 def daily_stats():
-    """
-    GET /stats/daily?user_id=abc&date=2026-06-05
-    Returns aggregated totals for all logged entries on that date.
-    """
     user_id = request.args.get("user_id")
     day     = request.args.get("date") or date.today().isoformat()
 
@@ -174,12 +138,9 @@ def daily_stats():
     })
 
 
+#Returns per-day totals across range
 @app.route("/stats/history")
 def history_stats():
-    """
-    GET /stats/history?user_id=abc&start=2026-05-01&end=2026-05-31
-    Returns per-day totals across a date range (max 31 days).
-    """
     user_id = request.args.get("user_id")
     start   = request.args.get("start")
     end     = request.args.get("end")
@@ -212,19 +173,18 @@ def history_stats():
         "total_entries": len(entries)
     })
 
-
+#remove a logged entry
 @app.route("/log/<int:entry_id>", methods=["DELETE"])
 def delete_entry(entry_id):
-    """DELETE /log/<id> — remove a logged entry."""
     with get_db() as db:
         db.execute("DELETE FROM log_entries WHERE id=?", (entry_id,))
         db.commit()
     return jsonify({"status": "deleted", "id": entry_id})
 
 
+#raw entries for a user
 @app.route("/log")
 def list_entries():
-    """GET /log?user_id=abc&date=2026-06-05 — raw entries for a user/date."""
     user_id = request.args.get("user_id")
     day     = request.args.get("date") or date.today().isoformat()
     if not user_id:
@@ -239,14 +199,10 @@ def list_entries():
     return jsonify([dict(e) | {"fields": json.loads(e["fields"])} for e in entries])
 
 
-# ---------------------------------------------------------------------------
 # Startup
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 5006))
     app.run(host="0.0.0.0", port=port, debug=os.environ.get("DEBUG", "false") == "true")
-# ---------------------------------------------------------------------------
-# Optional webhook: if WEBHOOK_URL is set, fire-and-forget after each log
-# ---------------------------------------------------------------------------
+
